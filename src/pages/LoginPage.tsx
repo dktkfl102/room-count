@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react"
 import { Link } from "react-router-dom"
-import { STORAGE_KEYS, toVirtualEmail, validateUsername } from "@/lib/auth"
+import { STORAGE_KEYS, normalizeUsername, toVirtualEmail, validateUsername } from "@/lib/auth"
 import { supabase } from "@/lib/supabase"
 
 function LoginPage() {
@@ -74,9 +74,13 @@ function LoginPage() {
           <span className="mb-2 block text-sm font-semibold sm:text-base">아이디</span>
           <input
             value={username}
-            onChange={(event) => setUsername(event.target.value)}
+            onChange={(event) => setUsername(normalizeUsername(event.target.value))}
             className="h-12 w-full rounded-lg border bg-background px-3 text-base outline-none ring-offset-background focus:ring-2 focus:ring-ring"
             placeholder="아이디를 입력하세요"
+            inputMode="text"
+            autoCapitalize="none"
+            autoCorrect="off"
+            maxLength={20}
           />
         </label>
 

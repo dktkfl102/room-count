@@ -7,7 +7,11 @@ import RoomSettingsPage from "@/pages/RoomSettingsPage"
 import SignUpPage from "@/pages/SignUpPage"
 import LoginPage from "@/pages/LoginPage"
 import { STORAGE_KEYS } from "@/lib/auth"
+import { loadCatalogItems } from "@/lib/catalog"
+import { loadLedgerSnapshotFromDb } from "@/lib/ledger"
+import { loadRooms } from "@/lib/rooms"
 import { supabase } from "@/lib/supabase"
+import { useAppStore } from "@/store/appStore"
 
 const navItems = [
   { to: "/", label: "메인" },
@@ -18,6 +22,10 @@ const navItems = [
 function App() {
   const [session, setSession] = useState<Session | null>(null)
   const [authLoading, setAuthLoading] = useState(true)
+  const setPriceItems = useAppStore((state) => state.setPriceItems)
+  const setRoomsFromDb = useAppStore((state) => state.setRoomsFromDb)
+  const setBusinessSessionsFromDb = useAppStore((state) => state.setBusinessSessionsFromDb)
+  const setSalesHistoryFromDb = useAppStore((state) => state.setSalesHistoryFromDb)
 
   useEffect(() => {
     let mounted = true
@@ -66,6 +74,39 @@ function App() {
   const handleLogout = async () => {
     await supabase.auth.signOut()
   }
+
+  useEffect(() => {
+    if (!session) {
+      return
+    }
+    let mounted = true
+    const syncInitialData = async () => {
+      const [nextPrices, nextRooms, ledgerSnapshot] = await Promise.all([
+        loadCatalogItems(),
+        loadRooms(),
+        loadLedgerSnapshotFromDb(),
+      ])
+      if (mounted) {
+        setPriceItems(nextPrices)
+        setRoomsFromDb(nextRooms)
+        setBusinessSessionsFromDb(
+          ledgerSnapshot.sessions,
+          ledgerSnapshot.activeBusinessSessionId,
+        )
+        setSalesHistoryFromDb(ledgerSnapshot.sales)
+      }
+    }
+    void syncInitialData()
+    return () => {
+      mounted = false
+    }
+  }, [
+    session,
+    setBusinessSessionsFromDb,
+    setPriceItems,
+    setRoomsFromDb,
+    setSalesHistoryFromDb,
+  ])
 
   if (authLoading) {
     return (
@@ -129,10 +170,7 @@ function App() {
         <header className="rounded-lg border bg-card p-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h1 className="text-2xl font-bold sm:text-3xl">노래방 장부관리</h1>
-              <p className="mt-1 text-sm text-muted-foreground sm:text-base">
-                모바일 · 태블릿 · 웹에서 사용할 반응형 화면
-              </p>
+              <h1 className="text-2xl font-bold sm:text-3xl">장부관리</h1>
             </div>
             <div className="flex items-center gap-2">
               <span className="text-sm text-muted-foreground sm:text-base">{username}</span>

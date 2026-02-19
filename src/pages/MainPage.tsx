@@ -1,26 +1,13 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import CurrencyInput from "@/components/CurrencyInput"
+import {
+  closeBusinessSessionInDb,
+  createBusinessSessionInDb,
+  createSettlementInDb,
+} from "@/lib/ledger"
 import { formatCurrency, useAppStore } from "@/store/appStore"
-
-const usageRows = [
-  { key: "time", label: "시간", unit: "시간" },
-  { key: "beer", label: "맥주", unit: "개" },
-  { key: "soju", label: "소주", unit: "개" },
-  { key: "helper", label: "도우미", unit: "명" },
-] as const
-
-const addButtons = [
-  { key: "time", label: "+1시간" },
-  { key: "beer", label: "+맥주" },
-  { key: "soju", label: "+소주" },
-  { key: "helper", label: "+도우미" },
-] as const
-
 const fallbackUsage = {
-  time: 0,
-  beer: 0,
-  soju: 0,
-  helper: 0,
+  itemCounts: {} as Record<string, number>,
   memo: "",
   cashAmount: 0,
   cardAmount: 0,
@@ -41,7 +28,7 @@ const formatDateTime = (iso: string | null) => {
 function MainPage() {
   const rooms = useAppStore((state) => state.rooms)
   const selectedRoomId = useAppStore((state) => state.selectedRoomId)
-  const prices = useAppStore((state) => state.prices)
+  const priceItems = useAppStore((state) => state.priceItems)
   const usageByRoom = useAppStore((state) => state.usageByRoom)
   const businessSessions = useAppStore((state) => state.businessSessions)
   const activeBusinessSessionId = useAppStore((state) => state.activeBusinessSessionId)
@@ -57,17 +44,30 @@ function MainPage() {
   const completeRoom = useAppStore((state) => state.completeRoom)
   const [settlementRoomId, setSettlementRoomId] = useState<string | null>(null)
   const [isCloseWarningOpen, setIsCloseWarningOpen] = useState(false)
+  const [syncMessage, setSyncMessage] = useState("")
+  const [guideMessage, setGuideMessage] = useState("")
+  const syncedBusinessSessionIdsRef = useRef<Set<string>>(new Set())
 
-  const getRoomUsage = (roomId: string) => usageByRoom[roomId] ?? fallbackUsage
+  const sortedPriceItems = useMemo(
+    () => [...priceItems].filter((item) => item.isActive !== false).sort((a, b) => a.displayOrder - b.displayOrder),
+    [priceItems],
+  )
+
+  const getRoomUsage = (roomId: string) => ({
+    ...fallbackUsage,
+    ...(usageByRoom[roomId] ?? {}),
+    itemCounts: {
+      ...fallbackUsage.itemCounts,
+      ...((usageByRoom[roomId]?.itemCounts as Record<string, number> | undefined) ?? {}),
+    },
+  })
 
   const calculateTotal = (roomId: string) => {
     const roomUsage = getRoomUsage(roomId)
-    return (
-      roomUsage.time * prices.time +
-      roomUsage.beer * prices.drink +
-      roomUsage.soju * prices.liquor +
-      roomUsage.helper * prices.helper
-    )
+    return sortedPriceItems.reduce((sum, item) => {
+      const quantity = roomUsage.itemCounts[item.id] ?? 0
+      return sum + quantity * item.price
+    }, 0)
   }
 
   const selectedRoom = rooms.find((room) => room.id === selectedRoomId) ?? rooms[0]
@@ -136,8 +136,35 @@ function MainPage() {
     if (!settlementRoom) {
       return
     }
+    const roomUsage = getRoomUsage(settlementRoom.id)
+    const beforeSessionId = activeBusinessSessionId
+    const settlementItems = sortedPriceItems.map((item) => ({
+      item,
+      quantity: roomUsage.itemCounts[item.id] ?? 0,
+    }))
+
     completeRoom(settlementRoom.id)
     setSettlementRoomId(null)
+
+    const latestRecord = useAppStore.getState().salesHistory.at(-1)
+    if (!latestRecord || latestRecord.roomId !== settlementRoom.id) {
+      return
+    }
+
+    void createSettlementInDb({
+      roomId: settlementRoom.id,
+      roomName: settlementRoom.name,
+      startAt: latestRecord.startTime,
+      endAt: latestRecord.endTime,
+      memo: latestRecord.memo,
+      totalAmount: latestRecord.total,
+      cashAmount: latestRecord.cashAmount,
+      cardAmount: latestRecord.cardAmount,
+      businessSessionId: beforeSessionId,
+      items: settlementItems,
+    }).catch(() => {
+      setSyncMessage("정산 데이터 DB 저장에 실패했습니다. 네트워크를 확인해 주세요.")
+    })
   }
 
   const handleEndBusinessClick = () => {
@@ -145,20 +172,96 @@ function MainPage() {
       setIsCloseWarningOpen(true)
       return
     }
+    const currentSessionId = activeBusinessSessionId
     endBusinessSession()
+    if (!currentSessionId) {
+      return
+    }
+    const endedSession = useAppStore
+      .getState()
+      .businessSessions.find((session) => session.id === currentSessionId)
+    void closeBusinessSessionInDb({
+      id: currentSessionId,
+      endAt: endedSession?.endTime ?? new Date().toISOString(),
+    }).catch(() => {
+      setSyncMessage("영업 마감 기록 DB 저장에 실패했습니다.")
+    })
   }
 
   const handleForceEndBusiness = () => {
+    const currentSessionId = activeBusinessSessionId
     endBusinessSession()
     setIsCloseWarningOpen(false)
+    if (!currentSessionId) {
+      return
+    }
+    const endedSession = useAppStore
+      .getState()
+      .businessSessions.find((session) => session.id === currentSessionId)
+    void closeBusinessSessionInDb({
+      id: currentSessionId,
+      endAt: endedSession?.endTime ?? new Date().toISOString(),
+    }).catch(() => {
+      setSyncMessage("영업 마감 기록 DB 저장에 실패했습니다.")
+    })
   }
+
+  const handleStartBusinessClick = () => {
+    if (activeBusinessSessionId) {
+      return
+    }
+    startBusinessSession()
+    const startedSession = useAppStore
+      .getState()
+      .businessSessions.at(-1)
+    if (!startedSession) {
+      return
+    }
+    void createBusinessSessionInDb({
+      id: startedSession.id,
+      startAt: startedSession.startTime,
+    }).catch(() => {
+      setSyncMessage("영업 시작 기록 DB 저장에 실패했습니다.")
+    })
+  }
+
+  const handleToggleSelectedRoomStatus = () => {
+    if (selectedRoomStatus === "waiting" && !activeBusinessSessionId) {
+      setGuideMessage("영업시작 버튼을 먼저 눌러주세요.")
+      return
+    }
+    setGuideMessage("")
+    setRoomStatus(
+      selectedRoom.id,
+      selectedRoomStatus === "waiting" ? "in_progress" : "waiting",
+    )
+  }
+
+  useEffect(() => {
+    if (!activeBusinessSessionId) {
+      return
+    }
+    if (syncedBusinessSessionIdsRef.current.has(activeBusinessSessionId)) {
+      return
+    }
+    const currentSession = businessSessions.find((session) => session.id === activeBusinessSessionId)
+    if (!currentSession) {
+      return
+    }
+
+    syncedBusinessSessionIdsRef.current.add(activeBusinessSessionId)
+    void createBusinessSessionInDb({
+      id: currentSession.id,
+      startAt: currentSession.startTime,
+    }).catch(() => {
+      syncedBusinessSessionIdsRef.current.delete(activeBusinessSessionId)
+      setSyncMessage("영업 시작 기록 DB 저장에 실패했습니다.")
+    })
+  }, [activeBusinessSessionId, businessSessions])
 
   return (
     <section className="mx-auto w-full max-w-4xl">
-      <h2 className="text-xl font-bold sm:text-2xl">메인 화면</h2>
-      <p className="mt-1 text-sm text-muted-foreground sm:text-base">
-        버튼 위주로 빠르게 입력하는 장부 화면
-      </p>
+        <h2 className="text-xl font-bold sm:text-2xl">메인 화면</h2>
 
       <div className="mt-5 rounded-lg border p-4">
         <h3 className="text-base font-semibold sm:text-lg">오늘 총 매출 요약</h3>
@@ -201,7 +304,7 @@ function MainPage() {
         <div className="mt-3 grid grid-cols-2 gap-2 sm:w-80">
           <button
             type="button"
-            onClick={startBusinessSession}
+            onClick={handleStartBusinessClick}
             disabled={Boolean(activeBusinessSession)}
             className="h-11 rounded-lg bg-primary text-base font-semibold text-primary-foreground disabled:opacity-40"
           >
@@ -222,6 +325,11 @@ function MainPage() {
           </p>
         ) : null}
       </div>
+      {syncMessage ? (
+        <p className="mt-3 rounded-lg bg-muted px-3 py-2 text-sm text-muted-foreground sm:text-base">
+          {syncMessage}
+        </p>
+      ) : null}
 
       <div className="mt-5">
         <h3 className="mb-2 text-base font-semibold sm:text-lg">방 선택</h3>
@@ -259,7 +367,7 @@ function MainPage() {
 
       <div className="mt-5 rounded-lg border p-4">
         <h3 className="text-base font-semibold sm:text-lg">
-          현재 사용 내역 - {selectedRoom.name}
+          {selectedRoom.name}
         </h3>
         <div className="mt-2 rounded-md bg-muted px-3 py-2 text-sm sm:text-base">
           상태:{" "}
@@ -271,26 +379,24 @@ function MainPage() {
         </div>
         <button
           type="button"
-          onClick={() =>
-            setRoomStatus(
-              selectedRoom.id,
-              selectedRoomStatus === "waiting" ? "in_progress" : "waiting",
-            )
-          }
+          onClick={handleToggleSelectedRoomStatus}
           className="mt-2 h-11 rounded-lg border px-4 text-sm font-semibold sm:text-base"
         >
           {selectedRoomStatus === "waiting" ? "진행 시작" : "대기 전환"}
         </button>
+        {guideMessage ? (
+          <p className="mt-2 text-xs text-destructive sm:text-sm">{guideMessage}</p>
+        ) : null}
 
         <div className="mt-3 space-y-2 text-base">
-          {usageRows.map((item) => (
+          {sortedPriceItems.map((item) => (
             <div
-              key={item.key}
+              key={item.id}
               className="flex items-center justify-between rounded-md bg-muted px-3 py-2"
             >
-              <span className="font-medium">{item.label}</span>
+              <span className="font-medium">{item.name}</span>
               <span>
-                +{usage[item.key]} {item.unit}
+                +{usage.itemCounts[item.id] ?? 0}
               </span>
             </div>
           ))}
@@ -302,16 +408,22 @@ function MainPage() {
       </div>
 
       <div className="mt-5">
-        <h3 className="mb-2 text-base font-semibold sm:text-lg">빠른 추가</h3>
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-          {addButtons.map((button) => (
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <h3 className="text-base font-semibold sm:text-lg">빠른 추가</h3>
+          {selectedRoomStatus !== "in_progress" ? (
+            <p className="text-xs text-destructive sm:text-sm">진행을 시작해주세요</p>
+          ) : null}
+        </div>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+          {sortedPriceItems.map((item) => (
             <button
-              key={button.key}
+              key={item.id}
               type="button"
-              onClick={() => incrementUsage(selectedRoom.id, button.key)}
-              className="h-14 rounded-lg bg-primary text-base font-semibold text-primary-foreground sm:text-lg"
+              onClick={() => incrementUsage(selectedRoom.id, item.id)}
+              disabled={selectedRoomStatus !== "in_progress"}
+              className="h-14 rounded-lg bg-primary text-base font-semibold text-primary-foreground disabled:cursor-not-allowed disabled:opacity-40 sm:text-lg"
             >
-              {button.label}
+              +{item.name}
             </button>
           ))}
         </div>
@@ -366,14 +478,14 @@ function MainPage() {
           onClick={() => setSettlementRoomId(selectedRoom.id)}
           className="h-12 rounded-lg bg-primary text-base font-semibold text-primary-foreground"
         >
-          선택 방 완료
+          {selectedRoom.name} 정산
         </button>
         <button
           type="button"
           onClick={() => resetUsage(selectedRoom.id)}
           className="h-12 rounded-lg border text-base font-semibold"
         >
-          선택 방 사용내역 초기화
+          {selectedRoom.name} 사용내역 초기화
         </button>
       </div>
 
@@ -382,22 +494,15 @@ function MainPage() {
           <div className="w-full max-w-md rounded-lg border bg-card p-4">
             <h3 className="text-lg font-bold sm:text-xl">정산 확인 - {settlementRoom.name}</h3>
             <div className="mt-3 space-y-2 text-sm sm:text-base">
-              <div className="flex items-center justify-between rounded-md bg-muted px-3 py-2">
-                <span>시간</span>
-                <span>+{settlementUsage.time}시간</span>
-              </div>
-              <div className="flex items-center justify-between rounded-md bg-muted px-3 py-2">
-                <span>맥주</span>
-                <span>+{settlementUsage.beer}개</span>
-              </div>
-              <div className="flex items-center justify-between rounded-md bg-muted px-3 py-2">
-                <span>소주</span>
-                <span>+{settlementUsage.soju}개</span>
-              </div>
-              <div className="flex items-center justify-between rounded-md bg-muted px-3 py-2">
-                <span>도우미</span>
-                <span>+{settlementUsage.helper}명</span>
-              </div>
+              {sortedPriceItems.map((item) => (
+                <div
+                  key={item.id}
+                  className="flex items-center justify-between rounded-md bg-muted px-3 py-2"
+                >
+                  <span>{item.name}</span>
+                  <span>+{settlementUsage.itemCounts[item.id] ?? 0}</span>
+                </div>
+              ))}
             </div>
             <div className="mt-3 rounded-md bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground sm:text-base">
               총 금액: {formatCurrency(settlementTotal)}원
@@ -420,7 +525,7 @@ function MainPage() {
                 onClick={handleConfirmSettlement}
                 className="h-11 rounded-lg bg-primary text-base font-semibold text-primary-foreground"
               >
-                완료 처리
+                정산 처리
               </button>
             </div>
           </div>

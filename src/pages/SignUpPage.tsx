@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { Link } from "react-router-dom"
-import { STORAGE_KEYS, toVirtualEmail } from "@/lib/auth"
+import { STORAGE_KEYS, normalizeUsername, toVirtualEmail } from "@/lib/auth"
 import { supabase } from "@/lib/supabase"
 
 function SignUpPage() {
@@ -12,7 +12,7 @@ function SignUpPage() {
   const isFormIncomplete = !username.trim() || !password || !confirmPassword
 
   const onUsernameChange = (value: string) => {
-    const normalizedValue = value.replace(/[^a-zA-Z0-9]/g, "")
+    const normalizedValue = normalizeUsername(value)
     setUsername(normalizedValue)
   }
 

@@ -1,14 +1,12 @@
 import { create } from "zustand"
 import { persist } from "zustand/middleware"
+import { DEFAULT_CATALOG_ITEMS } from "@/lib/catalog"
 import { formatNumberWithComma } from "@/lib/number"
 
 export type RoomStatus = "waiting" | "in_progress"
 
 type Usage = {
-  time: number
-  beer: number
-  soju: number
-  helper: number
+  itemCounts: Record<string, number>
   memo: string
   cashAmount: number
   cardAmount: number
@@ -22,11 +20,16 @@ type Room = {
   endTime: string | null
 }
 
-type Prices = {
-  time: number
-  drink: number
-  liquor: number
-  helper: number
+export type RoomConfig = Pick<Room, "id" | "name">
+
+export type PriceItem = {
+  id: string
+  name: string
+  unit: string
+  price: number
+  category: string
+  displayOrder: number
+  isActive: boolean
 }
 
 export type BusinessSession = {
@@ -52,20 +55,26 @@ export type SaleRecord = {
 type AppState = {
   rooms: Room[]
   selectedRoomId: string
-  prices: Prices
+  priceItems: PriceItem[]
   usageByRoom: Record<string, Usage>
   businessSessions: BusinessSession[]
   activeBusinessSessionId: string | null
   salesHistory: SaleRecord[]
   setSelectedRoom: (roomId: string) => void
-  setPrices: (prices: Prices) => void
+  setRoomsFromDb: (rooms: RoomConfig[]) => void
+  setPriceItems: (items: PriceItem[]) => void
+  setBusinessSessionsFromDb: (
+    sessions: BusinessSession[],
+    activeBusinessSessionId: string | null,
+  ) => void
+  setSalesHistoryFromDb: (sales: SaleRecord[]) => void
   startBusinessSession: () => void
   endBusinessSession: () => void
   setRoomStatus: (roomId: string, status: RoomStatus) => void
   addRoom: () => void
   renameRoom: (roomId: string, name: string) => void
   removeRoom: (roomId: string) => void
-  incrementUsage: (roomId: string, type: "time" | "beer" | "soju" | "helper") => void
+  incrementUsage: (roomId: string, itemId: string) => void
   setMemo: (roomId: string, memo: string) => void
   setPaymentAmount: (roomId: string, type: "cashAmount" | "cardAmount", amount: number) => void
   resetUsage: (roomId: string) => void
@@ -80,10 +89,7 @@ const DEFAULT_ROOMS: Room[] = [
 ]
 
 const emptyUsage = (): Usage => ({
-  time: 0,
-  beer: 0,
-  soju: 0,
-  helper: 0,
+  itemCounts: {},
   memo: "",
   cashAmount: 0,
   cardAmount: 0,
@@ -103,18 +109,77 @@ const sanitizeNumber = (value: number) => {
 }
 
 const nowIso = () => new Date().toISOString()
+const createUuid = () => {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID()
+  }
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (char) => {
+    const random = Math.floor(Math.random() * 16)
+    const value = char === "x" ? random : (random & 0x3) | 0x8
+    return value.toString(16)
+  })
+}
+
+const defaultPriceItems = (): PriceItem[] =>
+  DEFAULT_CATALOG_ITEMS.map((item, index) => ({
+    id: item.id,
+    name: item.name,
+    unit: item.unit,
+    price: item.price,
+    category: item.category,
+    displayOrder: item.displayOrder ?? index,
+    isActive: true,
+  }))
+
+const sanitizePriceItems = (items: PriceItem[]) =>
+  [...items]
+    .map((item, index) => ({
+      ...item,
+      name: item.name.trim() || `품목 ${index + 1}`,
+      unit: item.unit.trim() || "개",
+      category: (item.category || item.name || "etc").trim().toLowerCase() || "etc",
+      price: sanitizeNumber(item.price),
+      displayOrder: item.displayOrder >= 0 ? item.displayOrder : index,
+      isActive: item.isActive !== false,
+    }))
+    .sort((a, b) => a.displayOrder - b.displayOrder)
+    .map((item, index) => ({ ...item, displayOrder: index }))
+
+const normalizeUsage = (raw: unknown, items: PriceItem[]): Usage => {
+  const source = (raw as Record<string, unknown>) ?? {}
+  const legacyByCategory: Record<string, number> = {
+    time: Number(source.time ?? 0) || 0,
+    drink: Number(source.drink ?? 0) || 0,
+    soju: Number(source.soju ?? 0) || 0,
+    beer: Number(source.beer ?? 0) || 0,
+  }
+
+  const nextCounts: Record<string, number> = {}
+  const sourceCounts =
+    typeof source.itemCounts === "object" && source.itemCounts !== null
+      ? (source.itemCounts as Record<string, unknown>)
+      : {}
+
+  for (const item of items) {
+    const byId = Number(sourceCounts[item.id] ?? 0) || 0
+    const byCategory = Number(legacyByCategory[item.category] ?? 0) || 0
+    nextCounts[item.id] = Math.max(0, Math.floor(byId > 0 ? byId : byCategory))
+  }
+
+  return {
+    itemCounts: nextCounts,
+    memo: typeof source.memo === "string" ? source.memo : "",
+    cashAmount: sanitizeNumber(Number(source.cashAmount ?? 0) || 0),
+    cardAmount: sanitizeNumber(Number(source.cardAmount ?? 0) || 0),
+  }
+}
 
 export const useAppStore = create<AppState>()(
   persist(
     (set, get) => ({
       rooms: DEFAULT_ROOMS,
       selectedRoomId: DEFAULT_ROOMS[0].id,
-      prices: {
-        time: 30000,
-        drink: 5000,
-        liquor: 6000,
-        helper: 50000,
-      },
+      priceItems: defaultPriceItems(),
       usageByRoom: createInitialUsage(),
       businessSessions: [],
       activeBusinessSessionId: null,
@@ -122,14 +187,50 @@ export const useAppStore = create<AppState>()(
       setSelectedRoom: (roomId) => {
         set({ selectedRoomId: roomId })
       },
-      setPrices: (prices) => {
+      setRoomsFromDb: (rooms) => {
+        set((state) => {
+          const nextRooms = rooms.map((room) => {
+            const existing = state.rooms.find((item) => item.id === room.id)
+            return {
+              id: room.id,
+              name: room.name,
+              status: existing?.status ?? "waiting",
+              startTime: existing?.startTime ?? null,
+              endTime: existing?.endTime ?? null,
+            }
+          })
+
+          if (nextRooms.length === 0) {
+            return state
+          }
+
+          const nextUsage = nextRooms.reduce<Record<string, Usage>>((acc, room) => {
+            acc[room.id] = state.usageByRoom[room.id] ?? emptyUsage()
+            return acc
+          }, {})
+
+          const hasSelected = nextRooms.some((room) => room.id === state.selectedRoomId)
+          return {
+            rooms: nextRooms,
+            usageByRoom: nextUsage,
+            selectedRoomId: hasSelected ? state.selectedRoomId : nextRooms[0].id,
+          }
+        })
+      },
+      setPriceItems: (items) => {
         set({
-          prices: {
-            time: sanitizeNumber(prices.time),
-            drink: sanitizeNumber(prices.drink),
-            liquor: sanitizeNumber(prices.liquor),
-            helper: sanitizeNumber(prices.helper),
-          },
+          priceItems: sanitizePriceItems(items),
+        })
+      },
+      setBusinessSessionsFromDb: (sessions, activeBusinessSessionId) => {
+        set({
+          businessSessions: sessions,
+          activeBusinessSessionId,
+        })
+      },
+      setSalesHistoryFromDb: (sales) => {
+        set({
+          salesHistory: sales,
         })
       },
       startBusinessSession: () => {
@@ -138,7 +239,7 @@ export const useAppStore = create<AppState>()(
           return
         }
         const nextSession: BusinessSession = {
-          id: `session-${Date.now()}`,
+          id: createUuid(),
           startTime: nowIso(),
           endTime: null,
         }
@@ -153,6 +254,10 @@ export const useAppStore = create<AppState>()(
           return
         }
         const endedAt = nowIso()
+        const resetUsageByRoom = state.rooms.reduce<Record<string, Usage>>((acc, room) => {
+          acc[room.id] = emptyUsage()
+          return acc
+        }, {})
         set({
           businessSessions: state.businessSessions.map((session) =>
             session.id === state.activeBusinessSessionId
@@ -160,6 +265,13 @@ export const useAppStore = create<AppState>()(
               : session,
           ),
           activeBusinessSessionId: null,
+          rooms: state.rooms.map((room) => ({
+            ...room,
+            status: "waiting",
+            startTime: null,
+            endTime: endedAt,
+          })),
+          usageByRoom: resetUsageByRoom,
         })
       },
       setRoomStatus: (roomId, status) => {
@@ -171,7 +283,7 @@ export const useAppStore = create<AppState>()(
         // 실사용에서 시작 버튼을 놓쳐도 누락되지 않게 진행 시작 시 영업을 자동 시작합니다.
         if (status === "in_progress" && !nextActiveSessionId) {
           const nextSession: BusinessSession = {
-            id: `session-${Date.now()}`,
+            id: createUuid(),
             startTime: changedAt,
             endTime: null,
           }
@@ -254,13 +366,16 @@ export const useAppStore = create<AppState>()(
       },
       incrementUsage: (roomId, type) => {
         set((state) => {
-          const current = state.usageByRoom[roomId] ?? emptyUsage()
+          const current = normalizeUsage(state.usageByRoom[roomId], state.priceItems)
           return {
             usageByRoom: {
               ...state.usageByRoom,
               [roomId]: {
                 ...current,
-                [type]: current[type] + 1,
+                itemCounts: {
+                  ...current.itemCounts,
+                  [type]: (current.itemCounts[type] ?? 0) + 1,
+                },
               },
             },
           }
@@ -268,7 +383,7 @@ export const useAppStore = create<AppState>()(
       },
       setMemo: (roomId, memo) => {
         set((state) => {
-          const current = state.usageByRoom[roomId] ?? emptyUsage()
+          const current = normalizeUsage(state.usageByRoom[roomId], state.priceItems)
           return {
             usageByRoom: {
               ...state.usageByRoom,
@@ -279,7 +394,7 @@ export const useAppStore = create<AppState>()(
       },
       setPaymentAmount: (roomId, type, amount) => {
         set((state) => {
-          const current = state.usageByRoom[roomId] ?? emptyUsage()
+          const current = normalizeUsage(state.usageByRoom[roomId], state.priceItems)
           return {
             usageByRoom: {
               ...state.usageByRoom,
@@ -302,14 +417,13 @@ export const useAppStore = create<AppState>()(
         if (!room) {
           return
         }
-        const usage = state.usageByRoom[roomId] ?? emptyUsage()
+        const usage = normalizeUsage(state.usageByRoom[roomId], state.priceItems)
         const endTime = nowIso()
         const startTime = room.startTime ?? endTime
-        const total =
-          usage.time * state.prices.time +
-          usage.beer * state.prices.drink +
-          usage.soju * state.prices.liquor +
-          usage.helper * state.prices.helper
+        const total = state.priceItems.reduce((sum, item) => {
+          const quantity = usage.itemCounts[item.id] ?? 0
+          return sum + quantity * item.price
+        }, 0)
 
         const record: SaleRecord = {
           id: `sale-${Date.now()}`,
@@ -346,6 +460,26 @@ export const useAppStore = create<AppState>()(
     }),
     {
       name: "room-count-local-store",
+      version: 2,
+      migrate: (persistedState) => {
+        const state = (persistedState as Partial<AppState>) ?? {}
+        const priceItems =
+          Array.isArray(state.priceItems) && state.priceItems.length > 0
+            ? sanitizePriceItems(state.priceItems)
+            : defaultPriceItems()
+        const usageByRoom = Object.entries(state.usageByRoom ?? {}).reduce<
+          Record<string, Usage>
+        >((acc, [roomId, usage]) => {
+          acc[roomId] = normalizeUsage(usage, priceItems)
+          return acc
+        }, {})
+
+        return {
+          ...state,
+          priceItems,
+          usageByRoom,
+        }
+      },
     },
   ),
 )

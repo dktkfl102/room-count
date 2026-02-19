@@ -3,6 +3,9 @@ export const STORAGE_KEYS = {
   autoLoginEnabled: "room-count:auto-login-enabled",
 } as const
 
+export const normalizeUsername = (value: string) =>
+  value.replace(/[^a-zA-Z0-9]/g, "")
+
 const toHash = (value: string) => {
   let hash = 2166136261
   for (let index = 0; index < value.length; index += 1) {
@@ -21,9 +24,12 @@ export const toVirtualEmail = (username: string) => {
 }
 
 export const validateUsername = (value: string) => {
-  const trimmed = value.trim()
-  if (trimmed.length < 2 || trimmed.length > 30) {
-    return "아이디는 2~30자로 입력해 주세요."
+  const normalized = normalizeUsername(value.trim())
+  if (normalized.length < 5 || normalized.length > 20) {
+    return "아이디는 영문/숫자 5~20자로 입력해 주세요."
+  }
+  if (normalized !== value.trim()) {
+    return "아이디는 영문/숫자만 입력해 주세요."
   }
   return null
 }
