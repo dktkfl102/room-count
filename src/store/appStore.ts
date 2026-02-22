@@ -75,6 +75,7 @@ type AppState = {
   renameRoom: (roomId: string, name: string) => void
   removeRoom: (roomId: string) => void
   incrementUsage: (roomId: string, itemId: string) => void
+  decrementUsage: (roomId: string, itemId: string) => void
   setMemo: (roomId: string, memo: string) => void
   setPaymentAmount: (roomId: string, type: "cashAmount" | "cardAmount", amount: number) => void
   resetUsage: (roomId: string) => void
@@ -375,6 +376,24 @@ export const useAppStore = create<AppState>()(
                 itemCounts: {
                   ...current.itemCounts,
                   [type]: (current.itemCounts[type] ?? 0) + 1,
+                },
+              },
+            },
+          }
+        })
+      },
+      decrementUsage: (roomId, type) => {
+        set((state) => {
+          const current = normalizeUsage(state.usageByRoom[roomId], state.priceItems)
+          const currentCount = current.itemCounts[type] ?? 0
+          return {
+            usageByRoom: {
+              ...state.usageByRoom,
+              [roomId]: {
+                ...current,
+                itemCounts: {
+                  ...current.itemCounts,
+                  [type]: Math.max(0, currentCount - 1),
                 },
               },
             },

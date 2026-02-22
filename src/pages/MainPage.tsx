@@ -38,6 +38,7 @@ function MainPage() {
   const startBusinessSession = useAppStore((state) => state.startBusinessSession)
   const endBusinessSession = useAppStore((state) => state.endBusinessSession)
   const incrementUsage = useAppStore((state) => state.incrementUsage)
+  const decrementUsage = useAppStore((state) => state.decrementUsage)
   const setMemo = useAppStore((state) => state.setMemo)
   const setPaymentAmount = useAppStore((state) => state.setPaymentAmount)
   const resetUsage = useAppStore((state) => state.resetUsage)
@@ -395,37 +396,33 @@ function MainPage() {
               className="flex items-center justify-between rounded-md bg-muted px-3 py-2"
             >
               <span className="font-medium">{item.name}</span>
-              <span>
-                +{usage.itemCounts[item.id] ?? 0}
-              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => decrementUsage(selectedRoom.id, item.id)}
+                  disabled={selectedRoomStatus !== "in_progress" && (usage.itemCounts[item.id] ?? 0) <= 0}
+                  className="h-8 w-8 rounded-md border text-base font-semibold disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  -
+                </button>
+                <span className="min-w-10 text-center font-semibold">
+                  {usage.itemCounts[item.id] ?? 0}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => incrementUsage(selectedRoom.id, item.id)}
+                  disabled={selectedRoomStatus !== "in_progress"}
+                  className="h-8 w-8 rounded-md bg-primary text-base font-semibold text-primary-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  +
+                </button>
+              </div>
             </div>
           ))}
         </div>
 
         <div className="mt-4 rounded-lg bg-primary px-4 py-3 text-base font-bold text-primary-foreground sm:text-xl">
           총 금액: {formatCurrency(total)}원
-        </div>
-      </div>
-
-      <div className="mt-5">
-        <div className="mb-2 flex items-center justify-between gap-2">
-          <h3 className="text-base font-semibold sm:text-lg">빠른 추가</h3>
-          {selectedRoomStatus !== "in_progress" ? (
-            <p className="text-xs text-destructive sm:text-sm">진행을 시작해주세요</p>
-          ) : null}
-        </div>
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-          {sortedPriceItems.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => incrementUsage(selectedRoom.id, item.id)}
-              disabled={selectedRoomStatus !== "in_progress"}
-              className="h-14 rounded-lg bg-primary text-base font-semibold text-primary-foreground disabled:cursor-not-allowed disabled:opacity-40 sm:text-lg"
-            >
-              +{item.name}
-            </button>
-          ))}
         </div>
       </div>
 
