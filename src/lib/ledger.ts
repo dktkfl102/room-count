@@ -205,7 +205,7 @@ export const loadLedgerSnapshotFromDb = async (): Promise<LedgerSnapshot> => {
         cashAmount: Math.max(0, Number(settlement.cash_amount) || 0),
         cardAmount: Math.max(0, Number(settlement.card_amount) || 0),
         memo: row.memo ?? "",
-        settledAt: settlement.settled_at,
+        settledAt: row.start_at,
         businessSessionId: row.business_session_id,
       }
     })

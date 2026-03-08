@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react"
 import type { Session } from "@supabase/supabase-js"
 import { NavLink, Navigate, Route, Routes } from "react-router-dom"
 import MainPage from "@/pages/MainPage"
+import StatsPage from "@/pages/StatsPage"
 import PriceSettingsPage from "@/pages/PriceSettingsPage"
 import RoomSettingsPage from "@/pages/RoomSettingsPage"
 import SignUpPage from "@/pages/SignUpPage"
@@ -15,6 +16,7 @@ import { useAppStore } from "@/store/appStore"
 
 const navItems = [
   { to: "/", label: "메인" },
+  { to: "/stats", label: "통계" },
   { to: "/settings/prices", label: "가격표 설정" },
   { to: "/settings/rooms", label: "방 설정" },
 ]
@@ -185,7 +187,7 @@ function App() {
           </div>
         </header>
 
-        <nav className="grid grid-cols-3 gap-2 sm:grid-cols-3">
+        <nav className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           {navItems.map((item) => (
             <NavLink
               key={item.to}
@@ -208,6 +210,7 @@ function App() {
         <main className="rounded-lg border bg-card p-4 sm:p-6">
           <Routes>
             <Route path="/" element={<MainPage />} />
+            <Route path="/stats" element={<StatsPage />} />
             <Route path="/settings/prices" element={<PriceSettingsPage />} />
             <Route path="/settings/rooms" element={<RoomSettingsPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
