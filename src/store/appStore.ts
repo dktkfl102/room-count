@@ -30,6 +30,14 @@ export type PriceItem = {
   category: string
   displayOrder: number
   isActive: boolean
+  includeInActualSales: boolean
+}
+
+export type SaleLineItem = {
+  itemId: string | null
+  itemName: string
+  unitPrice: number
+  quantity: number
 }
 
 export type BusinessSession = {
@@ -50,6 +58,7 @@ export type SaleRecord = {
   memo: string
   settledAt: string
   businessSessionId: string | null
+  items: SaleLineItem[]
 }
 
 type AppState = {
@@ -130,6 +139,7 @@ const defaultPriceItems = (): PriceItem[] =>
     category: item.category,
     displayOrder: item.displayOrder ?? index,
     isActive: true,
+    includeInActualSales: item.includeInActualSales !== false,
   }))
 
 const sanitizePriceItems = (items: PriceItem[]) =>
@@ -142,6 +152,7 @@ const sanitizePriceItems = (items: PriceItem[]) =>
       price: sanitizeNumber(item.price),
       displayOrder: item.displayOrder >= 0 ? item.displayOrder : index,
       isActive: item.isActive !== false,
+      includeInActualSales: item.includeInActualSales !== false,
     }))
     .sort((a, b) => a.displayOrder - b.displayOrder)
     .map((item, index) => ({ ...item, displayOrder: index }))
@@ -173,6 +184,22 @@ const normalizeUsage = (raw: unknown, items: PriceItem[]): Usage => {
     cashAmount: sanitizeNumber(Number(source.cashAmount ?? 0) || 0),
     cardAmount: sanitizeNumber(Number(source.cardAmount ?? 0) || 0),
   }
+}
+
+const normalizeSaleItems = (raw: unknown): SaleLineItem[] => {
+  if (!Array.isArray(raw)) {
+    return []
+  }
+  return raw
+    .map((entry) => {
+      const item = (entry as Record<string, unknown>) ?? {}
+      const itemId = typeof item.itemId === "string" ? item.itemId : null
+      const itemName = typeof item.itemName === "string" ? item.itemName : "품목"
+      const unitPrice = sanitizeNumber(Number(item.unitPrice ?? 0))
+      const quantity = sanitizeNumber(Number(item.quantity ?? 0))
+      return { itemId, itemName, unitPrice, quantity }
+    })
+    .filter((item) => item.quantity > 0 || item.unitPrice > 0)
 }
 
 export const useAppStore = create<AppState>()(
@@ -456,6 +483,12 @@ export const useAppStore = create<AppState>()(
           memo: usage.memo,
           settledAt: endTime,
           businessSessionId: state.activeBusinessSessionId,
+          items: state.priceItems.map((item) => ({
+            itemId: item.id,
+            itemName: item.name,
+            unitPrice: item.price,
+            quantity: usage.itemCounts[item.id] ?? 0,
+          })),
         }
 
         set({
@@ -492,11 +525,18 @@ export const useAppStore = create<AppState>()(
           acc[roomId] = normalizeUsage(usage, priceItems)
           return acc
         }, {})
+        const salesHistory = Array.isArray(state.salesHistory)
+          ? state.salesHistory.map((sale) => ({
+              ...sale,
+              items: normalizeSaleItems(sale.items),
+            }))
+          : []
 
         return {
           ...state,
           priceItems,
           usageByRoom,
+          salesHistory,
         }
       },
     },

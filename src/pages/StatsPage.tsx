@@ -10,13 +10,14 @@ import {
 import { formatCurrency, useAppStore } from "@/store/appStore"
 
 type StatsUnit = "day" | "week" | "month"
-type StatsMetric = "sales" | "count" | "avg"
+type StatsMetric = "sales" | "count" | "actual"
 
 type StatsPoint = {
   key: number
   label: string
   total: number
   count: number
+  actualTotal: number
 }
 
 const UNIT_CONFIG: Record<StatsUnit, { label: string; size: number; rangeText: string }> = {
@@ -58,7 +59,7 @@ const formatBucketLabel = (bucketStartMs: number, unit: StatsUnit) => {
 }
 
 const formatMetricValue = (metric: StatsMetric, value: number) => {
-  if (metric === "sales" || metric === "avg") {
+  if (metric === "sales" || metric === "actual") {
     return `${formatCurrency(Math.round(value))}원`
   }
   return `${Math.round(value).toLocaleString()}건`
@@ -66,6 +67,7 @@ const formatMetricValue = (metric: StatsMetric, value: number) => {
 
 function StatsPage() {
   const salesHistory = useAppStore((state) => state.salesHistory)
+  const priceItems = useAppStore((state) => state.priceItems)
   const [unit, setUnit] = useState<StatsUnit>("day")
   const [metric, setMetric] = useState<StatsMetric>("sales")
 
@@ -83,8 +85,20 @@ function StatsPage() {
           label: formatBucketLabel(start, unit),
           total: 0,
           count: 0,
+          actualTotal: 0,
         },
       ]),
+    )
+
+    const includedItemIds = new Set(
+      priceItems
+        .filter((item) => item.includeInActualSales !== false)
+        .map((item) => item.id),
+    )
+    const includedItemNames = new Set(
+      priceItems
+        .filter((item) => item.includeInActualSales !== false)
+        .map((item) => item.name.trim()),
     )
 
     for (const sale of salesHistory) {
@@ -97,18 +111,26 @@ function StatsPage() {
       }
       target.total += sale.total
       target.count += 1
+      target.actualTotal += sale.items.reduce((sum, item) => {
+        const byId = item.itemId ? includedItemIds.has(item.itemId) : false
+        const byName = includedItemNames.has(item.itemName.trim())
+        if (!byId && !byName) {
+          return sum
+        }
+        return sum + item.unitPrice * item.quantity
+      }, 0)
     }
 
     return starts
       .map((start) => baseMap.get(start))
       .filter((point): point is StatsPoint => Boolean(point))
-  }, [salesHistory, unit])
+  }, [salesHistory, unit, priceItems])
 
   const totals = useMemo(() => {
     const totalSales = points.reduce((sum, point) => sum + point.total, 0)
     const totalCount = points.reduce((sum, point) => sum + point.count, 0)
-    const average = totalCount > 0 ? totalSales / totalCount : 0
-    return { totalSales, totalCount, average }
+    const actualSales = points.reduce((sum, point) => sum + point.actualTotal, 0)
+    return { totalSales, totalCount, actualSales }
   }, [points])
 
   const graphValues = points.map((point) => {
@@ -118,7 +140,7 @@ function StatsPage() {
     if (metric === "count") {
       return point.count
     }
-    return point.count > 0 ? point.total / point.count : 0
+    return point.actualTotal
   })
   const maxValue = Math.max(...graphValues, 1)
 
@@ -155,8 +177,8 @@ function StatsPage() {
           <p className="mt-2 text-xl font-bold sm:text-2xl">{totals.totalCount.toLocaleString()}건</p>
         </div>
         <div className="rounded-lg border bg-muted/30 p-4">
-          <p className="text-sm text-muted-foreground">객단가</p>
-          <p className="mt-2 text-xl font-bold sm:text-2xl">{formatCurrency(totals.average)}원</p>
+          <p className="text-sm text-muted-foreground">실제매출</p>
+          <p className="mt-2 text-xl font-bold sm:text-2xl">{formatCurrency(totals.actualSales)}원</p>
         </div>
       </div>
 
@@ -167,7 +189,7 @@ function StatsPage() {
             {([
               ["sales", "매출"],
               ["count", "정산건수"],
-              ["avg", "객단가"],
+              ["actual", "실제매출"],
             ] as [StatsMetric, string][]).map(([nextMetric, label]) => (
               <button
                 key={nextMetric}

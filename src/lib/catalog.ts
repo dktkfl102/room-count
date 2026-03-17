@@ -8,6 +8,7 @@ export type CatalogItem = {
   category: string
   displayOrder: number
   isActive: boolean
+  includeInActualSales: boolean
 }
 
 type CatalogRow = {
@@ -18,6 +19,7 @@ type CatalogRow = {
   default_unit_price: number
   display_order: number | null
   is_active: boolean
+  include_in_actual_sales: boolean | null
 }
 
 const DEFAULT_CATEGORY_ORDER = ["time", "drink", "soju", "beer"]
@@ -31,6 +33,7 @@ export const DEFAULT_CATALOG_ITEMS: CatalogItem[] = [
     category: "time",
     displayOrder: 0,
     isActive: true,
+    includeInActualSales: true,
   },
   {
     id: "default-drink",
@@ -40,6 +43,7 @@ export const DEFAULT_CATALOG_ITEMS: CatalogItem[] = [
     category: "drink",
     displayOrder: 1,
     isActive: true,
+    includeInActualSales: true,
   },
   {
     id: "default-soju",
@@ -49,6 +53,7 @@ export const DEFAULT_CATALOG_ITEMS: CatalogItem[] = [
     category: "soju",
     displayOrder: 2,
     isActive: true,
+    includeInActualSales: true,
   },
   {
     id: "default-beer",
@@ -58,6 +63,7 @@ export const DEFAULT_CATALOG_ITEMS: CatalogItem[] = [
     category: "beer",
     displayOrder: 3,
     isActive: true,
+    includeInActualSales: true,
   },
 ]
 
@@ -94,6 +100,7 @@ const toCatalogItem = (row: CatalogRow): CatalogItem => ({
   category: toCatalogCategory(row.category ?? row.name),
   displayOrder: Math.max(0, row.display_order ?? 0),
   isActive: row.is_active,
+  includeInActualSales: row.include_in_actual_sales ?? true,
 })
 
 const sortCatalogItems = (items: CatalogItem[]) =>
@@ -127,7 +134,9 @@ const toPayloadCategory = (item: CatalogItem) =>
 export const loadCatalogItems = async (): Promise<CatalogItem[]> => {
   const { data, error } = await supabase
     .from("item_catalog")
-    .select("id, category, name, unit, default_unit_price, display_order, is_active")
+    .select(
+      "id, category, name, unit, default_unit_price, display_order, is_active, include_in_actual_sales",
+    )
     .eq("is_active", true)
     .order("display_order", { ascending: true })
 
@@ -142,6 +151,7 @@ export const loadCatalogItems = async (): Promise<CatalogItem[]> => {
           category: item.category,
           display_order: index,
           is_active: true,
+          include_in_actual_sales: item.includeInActualSales,
         })),
       )
     } catch {
@@ -168,6 +178,7 @@ export const saveCatalogItems = async (items: CatalogItem[]) => {
       price: Math.max(0, Number(item.price) || 0),
       displayOrder: index,
       isActive: true,
+      includeInActualSales: item.includeInActualSales !== false,
     }))
     .filter((item) => item.name.length > 0)
 
@@ -196,6 +207,7 @@ export const saveCatalogItems = async (items: CatalogItem[]) => {
       category: item.category,
       display_order: item.displayOrder,
       is_active: true,
+      include_in_actual_sales: item.includeInActualSales !== false,
     }
 
     if (isUuid(item.id)) {

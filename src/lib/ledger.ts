@@ -1,5 +1,5 @@
 import { supabase } from "@/lib/supabase"
-import type { BusinessSession, PriceItem, SaleRecord } from "@/store/appStore"
+import type { BusinessSession, PriceItem, SaleLineItem, SaleRecord } from "@/store/appStore"
 
 type StartBusinessSessionInput = {
   id: string
@@ -149,6 +149,14 @@ type RoomSessionRow = {
   memo: string | null
   business_session_id: string | null
   settlements: RoomSessionSettlementRow[] | RoomSessionSettlementRow | null
+  room_session_items:
+    | {
+        item_id: string | null
+        item_name_snapshot: string
+        unit_price_snapshot: number
+        quantity: number
+      }[]
+    | null
 }
 
 const toSettlement = (
@@ -172,7 +180,7 @@ export const loadLedgerSnapshotFromDb = async (): Promise<LedgerSnapshot> => {
     supabase
       .from("room_sessions")
       .select(
-        "id, room_id, room_name_snapshot, start_at, end_at, total_amount, memo, business_session_id, settlements(cash_amount, card_amount, settled_at)",
+        "id, room_id, room_name_snapshot, start_at, end_at, total_amount, memo, business_session_id, settlements(cash_amount, card_amount, settled_at), room_session_items(item_id, item_name_snapshot, unit_price_snapshot, quantity)",
       )
       .order("end_at", { ascending: true }),
   ])
@@ -195,6 +203,13 @@ export const loadLedgerSnapshotFromDb = async (): Promise<LedgerSnapshot> => {
       if (!settlement || !row.end_at) {
         return null
       }
+      const items: SaleLineItem[] = (row.room_session_items ?? []).map((item) => ({
+        itemId: item.item_id,
+        itemName: item.item_name_snapshot,
+        unitPrice: Math.max(0, Number(item.unit_price_snapshot) || 0),
+        quantity: Math.max(0, Number(item.quantity) || 0),
+      }))
+
       return {
         id: row.id,
         roomId: row.room_id,
@@ -207,6 +222,7 @@ export const loadLedgerSnapshotFromDb = async (): Promise<LedgerSnapshot> => {
         memo: row.memo ?? "",
         settledAt: row.start_at,
         businessSessionId: row.business_session_id,
+        items,
       }
     })
     .filter((row): row is SaleRecord => Boolean(row))
