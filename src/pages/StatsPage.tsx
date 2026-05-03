@@ -7,7 +7,12 @@ import {
     startOfKstWeekMs,
     toKstParts,
 } from "@/lib/utils";
-import { formatCurrency, useAppStore, type SaleRecord } from "@/store/appStore";
+import {
+    formatCurrency,
+    useAppStore,
+    type BusinessSession,
+    type SaleRecord,
+} from "@/store/appStore";
 import DayDetailLookupCard from "../components/DayDetailLookupCard";
 
 type StatsUnit = "day" | "week" | "month";
@@ -75,6 +80,7 @@ const formatMetricValue = (metric: StatsMetric, value: number) => {
 
 function StatsPage() {
     const salesHistory = useAppStore((state) => state.salesHistory);
+    const businessSessions = useAppStore((state) => state.businessSessions);
     const priceItems = useAppStore((state) => state.priceItems);
     const [unit, setUnit] = useState<StatsUnit>("day");
     const [metric, setMetric] = useState<StatsMetric>("sales");
@@ -109,6 +115,16 @@ function StatsPage() {
             }, 0),
         [includedItemIds, includedItemNames],
     );
+    const sessionStartTimeById = useMemo(
+        () =>
+            new Map(
+                businessSessions.map((session: BusinessSession) => [
+                    session.id,
+                    session.startTime,
+                ]),
+            ),
+        [businessSessions],
+    );
 
     const points = useMemo(() => {
         const now = new Date();
@@ -132,8 +148,10 @@ function StatsPage() {
         );
 
         for (const sale of salesHistory) {
-            // Use room session start_at as the statistical date basis.
-            const baseDate = new Date(sale.startTime);
+            const sessionStartTime = sale.businessSessionId
+                ? sessionStartTimeById.get(sale.businessSessionId)
+                : null;
+            const baseDate = new Date(sessionStartTime ?? sale.startTime);
             const key = getBucketStartMs(baseDate, unit);
             const target = baseMap.get(key);
             if (!target) {
@@ -147,7 +165,7 @@ function StatsPage() {
         return starts
             .map((start) => baseMap.get(start))
             .filter((point): point is StatsPoint => Boolean(point));
-    }, [getActualSaleAmount, salesHistory, unit]);
+    }, [getActualSaleAmount, salesHistory, sessionStartTimeById, unit]);
 
     const totals = useMemo(() => {
         const totalSales = points.reduce((sum, point) => sum + point.total, 0);
@@ -289,6 +307,7 @@ function StatsPage() {
             {unit === "day" ? (
                 <DayDetailLookupCard
                     salesHistory={salesHistory}
+                    businessSessions={businessSessions}
                     getActualSaleAmount={getActualSaleAmount}
                 />
             ) : null}

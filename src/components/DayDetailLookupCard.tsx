@@ -5,7 +5,11 @@ import {
     startOfKstDayMs,
     toKstParts,
 } from "@/lib/utils";
-import { formatCurrency, type SaleRecord } from "@/store/appStore";
+import {
+    formatCurrency,
+    type BusinessSession,
+    type SaleRecord,
+} from "@/store/appStore";
 
 type DayDetailRecord = {
     id: string;
@@ -21,6 +25,7 @@ type DayDetailRecord = {
 
 type DayDetailLookupCardProps = {
     salesHistory: SaleRecord[];
+    businessSessions: BusinessSession[];
     getActualSaleAmount: (sale: SaleRecord) => number;
 };
 
@@ -75,7 +80,7 @@ const formatKstTimeLabel = (date: Date | string | number) => {
 };
 
 function DayDetailLookupCard(props: DayDetailLookupCardProps) {
-    const { salesHistory, getActualSaleAmount } = props;
+    const { salesHistory, businessSessions, getActualSaleAmount } = props;
     const [dateInputDigits, setDateInputDigits] = useState("");
     const [searchedDayStartMs, setSearchedDayStartMs] = useState<number | null>(
         null,
@@ -104,16 +109,32 @@ function DayDetailLookupCard(props: DayDetailLookupCardProps) {
             // Ignore broken localStorage payload.
         }
     }, []);
+    const businessDayStartBySessionId = useMemo(
+        () =>
+            new Map(
+                businessSessions.map((session) => [
+                    session.id,
+                    startOfKstDayMs(session.startTime),
+                ]),
+            ),
+        [businessSessions],
+    );
 
     const searchedDayDetail = useMemo(() => {
         if (searchedDayStartMs === null) {
             return null;
         }
         const records: DayDetailRecord[] = salesHistory
-            .filter(
-                (sale) =>
-                    startOfKstDayMs(sale.startTime) === searchedDayStartMs,
-            )
+            .filter((sale) => {
+                const businessDayStartMs = sale.businessSessionId
+                    ? businessDayStartBySessionId.get(sale.businessSessionId)
+                    : undefined;
+                const fallbackDayStartMs = startOfKstDayMs(sale.startTime);
+                return (
+                    (businessDayStartMs ?? fallbackDayStartMs) ===
+                    searchedDayStartMs
+                );
+            })
             .map((sale) => {
                 const itemSummary = sale.items
                     .filter((item) => item.quantity > 0)
@@ -147,7 +168,12 @@ function DayDetailLookupCard(props: DayDetailLookupCardProps) {
             actualSales,
             records,
         };
-    }, [getActualSaleAmount, salesHistory, searchedDayStartMs]);
+    }, [
+        businessDayStartBySessionId,
+        getActualSaleAmount,
+        salesHistory,
+        searchedDayStartMs,
+    ]);
 
     const saveRecentDate = (digits: string) => {
         setRecentDates((prev) => {
