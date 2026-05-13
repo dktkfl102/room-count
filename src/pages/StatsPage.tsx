@@ -24,6 +24,8 @@ type StatsPoint = {
     total: number;
     count: number;
     actualTotal: number;
+    cardTotal: number;
+    cashTotal: number;
 };
 
 const UNIT_CONFIG: Record<
@@ -78,6 +80,9 @@ const formatMetricValue = (metric: StatsMetric, value: number) => {
     return `${Math.round(value).toLocaleString()}건`;
 };
 
+const formatWonValue = (value: number) =>
+    `${formatCurrency(Math.round(value))}원`;
+
 function StatsPage() {
     const salesHistory = useAppStore((state) => state.salesHistory);
     const businessSessions = useAppStore((state) => state.businessSessions);
@@ -106,7 +111,9 @@ function StatsPage() {
     const getActualSaleAmount = useCallback(
         (sale: SaleRecord) =>
             sale.items.reduce((sum, item) => {
-                const byId = item.itemId ? includedItemIds.has(item.itemId) : false;
+                const byId = item.itemId
+                    ? includedItemIds.has(item.itemId)
+                    : false;
                 const byName = includedItemNames.has(item.itemName.trim());
                 if (!byId && !byName) {
                     return sum;
@@ -143,6 +150,8 @@ function StatsPage() {
                     total: 0,
                     count: 0,
                     actualTotal: 0,
+                    cardTotal: 0,
+                    cashTotal: 0,
                 },
             ]),
         );
@@ -160,6 +169,8 @@ function StatsPage() {
             target.total += sale.total;
             target.count += 1;
             target.actualTotal += getActualSaleAmount(sale);
+            target.cardTotal += sale.cardAmount;
+            target.cashTotal += sale.cashAmount;
         }
 
         return starts
@@ -282,12 +293,38 @@ function StatsPage() {
                         return (
                             <div
                                 key={point.key}
-                                className="flex h-full flex-col items-center justify-end gap-1"
+                                className="flex h-full flex-col items-center justify-end gap-2"
                             >
-                                <div className="text-[10px] text-muted-foreground sm:text-xs">
-                                    {value > 0
-                                        ? formatMetricValue(metric, value)
-                                        : "-"}
+                                <div className="min-h-[2.75rem] text-center text-[10px] text-muted-foreground sm:text-xs">
+                                    {value > 0 ? (
+                                        metric === "sales" ? (
+                                            <div className="space-y-0.5">
+                                                <div>
+                                                    총{" "}
+                                                    {formatMetricValue(
+                                                        metric,
+                                                        value,
+                                                    )}
+                                                </div>
+                                                <div>
+                                                    카드{" "}
+                                                    {formatWonValue(
+                                                        point.cardTotal,
+                                                    )}
+                                                </div>
+                                                <div>
+                                                    현금{" "}
+                                                    {formatWonValue(
+                                                        point.cashTotal,
+                                                    )}
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            formatMetricValue(metric, value)
+                                        )
+                                    ) : (
+                                        "-"
+                                    )}
                                 </div>
                                 <div className="flex h-36 w-full items-end rounded-md bg-muted/40 px-1">
                                     <div
