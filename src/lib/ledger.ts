@@ -171,21 +171,52 @@ const toSettlement = (
   return raw
 }
 
+const PAGE_SIZE = 1000
+
+const fetchAllRows = async <T>(
+  queryFactory: (
+    from: number,
+    to: number,
+  ) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
+): Promise<T[]> => {
+  const rows: T[] = []
+  let from = 0
+  while (true) {
+    const to = from + PAGE_SIZE - 1
+    const { data, error } = await queryFactory(from, to)
+    if (error) {
+      throw new Error(error.message)
+    }
+    const chunk = data ?? []
+    rows.push(...chunk)
+    if (chunk.length < PAGE_SIZE) {
+      break
+    }
+    from += PAGE_SIZE
+  }
+  return rows
+}
+
 export const loadLedgerSnapshotFromDb = async (): Promise<LedgerSnapshot> => {
-  const [sessionsResult, roomSessionsResult] = await Promise.all([
-    supabase
-      .from("business_sessions")
-      .select("id, start_at, end_at, status")
-      .order("start_at", { ascending: true }),
-    supabase
-      .from("room_sessions")
-      .select(
-        "id, room_id, room_name_snapshot, start_at, end_at, total_amount, memo, business_session_id, settlements(cash_amount, card_amount, settled_at), room_session_items(item_id, item_name_snapshot, unit_price_snapshot, quantity)",
-      )
-      .order("end_at", { ascending: true }),
+  const [sessionsRows, roomSessionRows] = await Promise.all([
+    fetchAllRows<BusinessSessionRow>((from, to) =>
+      supabase
+        .from("business_sessions")
+        .select("id, start_at, end_at, status")
+        .order("start_at", { ascending: true })
+        .range(from, to),
+    ),
+    fetchAllRows<RoomSessionRow>((from, to) =>
+      supabase
+        .from("room_sessions")
+        .select(
+          "id, room_id, room_name_snapshot, start_at, end_at, total_amount, memo, business_session_id, settlements(cash_amount, card_amount, settled_at), room_session_items(item_id, item_name_snapshot, unit_price_snapshot, quantity)",
+        )
+        .order("end_at", { ascending: true })
+        .range(from, to),
+    ),
   ])
 
-  const sessionsRows = (sessionsResult.data ?? []) as BusinessSessionRow[]
   const sessions: BusinessSession[] = sessionsRows.map((row) => ({
     id: row.id,
     startTime: row.start_at,
@@ -196,7 +227,6 @@ export const loadLedgerSnapshotFromDb = async (): Promise<LedgerSnapshot> => {
     sessionsRows.find((row) => row.status === "open") ??
     [...sessionsRows].reverse().find((row) => !row.end_at)
 
-  const roomSessionRows = (roomSessionsResult.data ?? []) as RoomSessionRow[]
   const sales: SaleRecord[] = roomSessionRows
     .map((row) => {
       const settlement = toSettlement(row.settlements)
