@@ -89,6 +89,7 @@ function StatsPage() {
     const priceItems = useAppStore((state) => state.priceItems);
     const [unit, setUnit] = useState<StatsUnit>("day");
     const [metric, setMetric] = useState<StatsMetric>("sales");
+    const [offset, setOffset] = useState(0);
     const includedItemIds = useMemo(
         () =>
             new Set(
@@ -133,12 +134,35 @@ function StatsPage() {
         [businessSessions],
     );
 
+    const earliestDataMs = useMemo(() => {
+        let min: number | null = null;
+        for (const sale of salesHistory) {
+            const sessionStartTime = sale.businessSessionId
+                ? sessionStartTimeById.get(sale.businessSessionId)
+                : null;
+            const ms = new Date(sessionStartTime ?? sale.startTime).getTime();
+            if (min === null || ms < min) {
+                min = ms;
+            }
+        }
+        return min;
+    }, [salesHistory, sessionStartTimeById]);
+
+    const earliestBucketStartMs = useMemo(
+        () =>
+            earliestDataMs === null
+                ? null
+                : getBucketStartMs(new Date(earliestDataMs), unit),
+        [earliestDataMs, unit],
+    );
+
     const points = useMemo(() => {
         const now = new Date();
         const currentStart = getBucketStartMs(now, unit);
         const { size } = UNIT_CONFIG[unit];
+        const pivotStart = moveBucketMs(currentStart, unit, offset);
         const starts = Array.from({ length: size }, (_, index) =>
-            moveBucketMs(currentStart, unit, index - (size - 1)),
+            moveBucketMs(pivotStart, unit, index - (size - 1)),
         );
 
         const baseMap = new Map<number, StatsPoint>(
@@ -176,7 +200,20 @@ function StatsPage() {
         return starts
             .map((start) => baseMap.get(start))
             .filter((point): point is StatsPoint => Boolean(point));
-    }, [getActualSaleAmount, salesHistory, sessionStartTimeById, unit]);
+    }, [getActualSaleAmount, offset, salesHistory, sessionStartTimeById, unit]);
+
+    const canGoNext = offset < 0;
+    const canGoPrev =
+        earliestBucketStartMs !== null &&
+        points.length > 0 &&
+        earliestBucketStartMs < points[0].key;
+
+    const goToPrevPeriod = () => {
+        setOffset((prev) => prev - UNIT_CONFIG[unit].size);
+    };
+    const goToNextPeriod = () => {
+        setOffset((prev) => Math.min(0, prev + UNIT_CONFIG[unit].size));
+    };
 
     const totals = useMemo(() => {
         const totalSales = points.reduce((sum, point) => sum + point.total, 0);
@@ -203,8 +240,12 @@ function StatsPage() {
         <section className="mx-auto w-full max-w-4xl">
             <h2 className="text-xl font-bold sm:text-2xl">통계</h2>
             <p className="mt-1 text-sm text-muted-foreground sm:text-base">
-                {UNIT_CONFIG[unit].rangeText} 기준으로 핵심 지표를 확인할 수
-                있습니다.
+                {offset === 0
+                    ? UNIT_CONFIG[unit].rangeText
+                    : points.length > 0
+                      ? `${points[0].label} ~ ${points[points.length - 1].label}`
+                      : UNIT_CONFIG[unit].rangeText}{" "}
+                기준으로 핵심 지표를 확인할 수 있습니다.
             </p>
 
             <div className="mt-4 grid grid-cols-3 gap-2 rounded-lg border p-1 sm:w-fit">
@@ -212,7 +253,10 @@ function StatsPage() {
                     <button
                         key={nextUnit}
                         type="button"
-                        onClick={() => setUnit(nextUnit)}
+                        onClick={() => {
+                            setUnit(nextUnit);
+                            setOffset(0);
+                        }}
                         className={[
                             "h-10 rounded-md px-4 text-sm font-semibold sm:text-base",
                             unit === nextUnit
@@ -276,6 +320,32 @@ function StatsPage() {
                             </button>
                         ))}
                     </div>
+                </div>
+
+                <div className="mt-3 flex items-center justify-center gap-3">
+                    <button
+                        type="button"
+                        onClick={goToPrevPeriod}
+                        disabled={!canGoPrev}
+                        aria-label="이전 기간"
+                        className="h-8 w-8 rounded-md border text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-30"
+                    >
+                        ◀
+                    </button>
+                    <span className="text-xs font-medium text-muted-foreground sm:text-sm">
+                        {points.length > 0
+                            ? `${points[0].label} ~ ${points[points.length - 1].label}`
+                            : UNIT_CONFIG[unit].rangeText}
+                    </span>
+                    <button
+                        type="button"
+                        onClick={goToNextPeriod}
+                        disabled={!canGoNext}
+                        aria-label="다음 기간"
+                        className="h-8 w-8 rounded-md border text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-30"
+                    >
+                        ▶
+                    </button>
                 </div>
 
                 <div
