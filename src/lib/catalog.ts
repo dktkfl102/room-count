@@ -140,7 +140,14 @@ export const loadCatalogItems = async (): Promise<CatalogItem[]> => {
     .eq("is_active", true)
     .order("display_order", { ascending: true })
 
-  if (error || !data || data.length === 0) {
+  if (error) {
+    // 조회 자체가 실패한 경우(네트워크/RLS 일시 오류)에는 데이터 유무를 알 수 없으므로
+    // 기본값을 새로 insert하지 않고, 로컬 fallback만 보여줍니다.
+    return cloneDefaultItems()
+  }
+
+  if (!data || data.length === 0) {
+    // 조회가 성공했는데 실제로 품목이 하나도 없는 경우(신규 계정)에만 기본값을 생성합니다.
     const defaults = cloneDefaultItems()
     try {
       await supabase.from("item_catalog").insert(
