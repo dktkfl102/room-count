@@ -225,6 +225,34 @@ function StatsPage() {
         return { totalSales, totalCount, actualSales };
     }, [points]);
 
+    const yearToDate = useMemo(() => {
+        const { year, month } = toKstParts(new Date());
+        const result = {
+            year,
+            month,
+            total: 0,
+            count: 0,
+            actualTotal: 0,
+            cardTotal: 0,
+            cashTotal: 0,
+        };
+        for (const sale of salesHistory) {
+            const sessionStartTime = sale.businessSessionId
+                ? sessionStartTimeById.get(sale.businessSessionId)
+                : null;
+            const baseDate = new Date(sessionStartTime ?? sale.startTime);
+            if (toKstParts(baseDate).year !== year) {
+                continue;
+            }
+            result.total += sale.total;
+            result.count += 1;
+            result.actualTotal += getActualSaleAmount(sale);
+            result.cardTotal += sale.cardAmount;
+            result.cashTotal += sale.cashAmount;
+        }
+        return result;
+    }, [getActualSaleAmount, salesHistory, sessionStartTimeById]);
+
     const graphValues = points.map((point) => {
         if (metric === "sales") {
             return point.total;
@@ -410,6 +438,48 @@ function StatsPage() {
                     })}
                 </div>
             </div>
+
+            {unit === "month" ? (
+                <div className="mt-5 rounded-lg border p-4">
+                    <h3 className="text-base font-semibold sm:text-lg">
+                        {yearToDate.year}년 누적 (
+                        {yearToDate.month === 1
+                            ? "1월"
+                            : `1~${yearToDate.month}월`}
+                        )
+                    </h3>
+                    <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                        <div className="rounded-lg border bg-muted/30 p-4">
+                            <p className="text-sm text-muted-foreground">
+                                누적 매출
+                            </p>
+                            <p className="mt-2 text-xl font-bold sm:text-2xl">
+                                {formatWonValue(yearToDate.total)}
+                            </p>
+                            <p className="mt-1 text-xs text-muted-foreground sm:text-sm">
+                                카드 {formatWonValue(yearToDate.cardTotal)} ·
+                                현금 {formatWonValue(yearToDate.cashTotal)}
+                            </p>
+                        </div>
+                        <div className="rounded-lg border bg-muted/30 p-4">
+                            <p className="text-sm text-muted-foreground">
+                                누적 정산 건수
+                            </p>
+                            <p className="mt-2 text-xl font-bold sm:text-2xl">
+                                {yearToDate.count.toLocaleString()}건
+                            </p>
+                        </div>
+                        <div className="rounded-lg border bg-muted/30 p-4">
+                            <p className="text-sm text-muted-foreground">
+                                누적 실제매출
+                            </p>
+                            <p className="mt-2 text-xl font-bold sm:text-2xl">
+                                {formatWonValue(yearToDate.actualTotal)}
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            ) : null}
 
             {unit === "day" ? (
                 <DayDetailLookupCard
